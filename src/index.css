@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 210 19% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 210 19% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 19% 15%;
+
+    /* MOTURIAL Brand Colors - Orange, Black, Concrete */
+    --primary: 14 100% 57%; /* MOTURIAL Orange #FF5722 */
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 14 90% 67%; /* Lighter orange for glows */
+
+    --secondary: 0 0% 9%; /* Black */
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 20 6% 90%; /* Concrete/cement color */
+    --muted-foreground: 0 0% 20%;
+
+    --accent: 14 100% 57%; /* MOTURIAL Orange */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 20 6% 85%; /* Light concrete */
+    --input: 20 6% 85%;
+    --ring: 14 100% 57%;
+
+    /* MOTURIAL Design System */
+    --gradient-primary: linear-gradient(135deg, hsl(14 100% 57%), hsl(14 90% 67%));
+    --gradient-hero: linear-gradient(135deg, hsl(0 0% 9%) 0%, hsl(20 6% 20%) 100%);
+    --shadow-elegant: 0 10px 30px -10px hsl(14 100% 57% / 0.3);
+    --shadow-glow: 0 0 40px hsl(14 90% 67% / 0.4);
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Concrete variant */
+    --concrete: 20 8% 70%; /* Concrete/cement color */
+    --concrete-foreground: 0 0% 15%;
+    --concrete-glow: 20 8% 80%; /* Lighter concrete for glows */
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 0 0% 9%; /* Dark mode background */
+    --foreground: 0 0% 100%;
+
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 100%;
+
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 14 100% 57%; /* MOTURIAL Orange stays same */
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 14 90% 67%;
+
+    --secondary: 0 0% 15%; /* Darker black for secondary */
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 20 6% 20%; /* Darker concrete */
+    --muted-foreground: 0 0% 70%;
+
+    --accent: 14 100% 57%; /* MOTURIAL Orange */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62.8% 50.6%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 20 6% 20%;
+    --input: 20 6% 20%;
+    --ring: 14 100% 57%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(14 100% 57%), hsl(14 90% 67%));
+    --gradient-hero: linear-gradient(135deg, hsl(0 0% 9%) 0%, hsl(20 6% 20%) 100%);
+    --shadow-elegant: 0 10px 30px -10px hsl(14 100% 57% / 0.3);
+    --shadow-glow: 0 0 40px hsl(14 90% 67% / 0.4);
+
+    /* Concrete variant for dark mode */
+    --concrete: 20 8% 40%;
+    --concrete-foreground: 0 0% 85%;
+    --concrete-glow: 20 8% 50%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
