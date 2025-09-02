@@ -1,0 +1,930 @@
+Front-end: Next.js/React + TypeScript, páginas responsivas. Auth/DB/Storage: Supabase (SDK no front). Server-side: Supabase Edge Functions (Deno) chamadas pelo front (não criar server Node). Pagamentos: Pagar.me v5 (cartão com token no front, PIX e boleto). 2FA: via SMS/WhatsApp/Email usando Edge Function.
+Objetivo do produto
+Usuário final escolhe loja, modelo/cor, plano (dia/mês/ano), faz cotação, reserva, paga (cartão/PIX/boleto) e retira na loja. Pode também comprar acessórios e pagar no app.
+Regras de arquitetura
+Front chama apenas: Supabase SDK para CRUD simples e Edge Functions para lógica sensível (cotação, criação de aluguel, fechamento, pagamentos, 2FA). NUNCA trafegar dados de cartão pelo backend. O front tokeniza com tokenizecard.js (public key) e envia card_token para a Edge Function de pagamento. RLS no Postgres garantindo: Cliente vê/edita apenas seus dados (rentals/invoices/orders). Staff vê dados da sua org/franquia/loja.
+Estados:
+Moto: available → reserved → rented → available , Aluguel: pending → reserved → active → completed (+ canceled/overdue) , Fatura: pending/paid/failed/refunded/canceled
+Estrutura de dados (tabelas principais)
+orgs, org_members, franchises, stores ; profiles(user_id, full_name, phone, document_id, is_staff) ; bike_models(brand, model, colors[‘preta’,’vermelha’,’azul’], specs) ; bikes(store_id, bike_model_id, color, plate, vin, status, odometer) ; rental_plans(org_id, name, duration_type: hour/day/month/year, duration_qty, base_price_cents, price_rules) ;;rentals(user_id, store_id, bike_id, rental_plan_id, start_at, end_at, status, price_cents, deposit_cents, km_start, km_end) ; invoices(rental_id, user_id, amount_cents, status, gateway, gateway_payment_id, boleto_url, pix_qr_code, pix_copy_paste, paid_at) ; accessories(org_id, name, price_cents, stock, image_url, active) ; accessory_orders(user_id, store_id, status, total_cents) + accessory_order_items(order_id, accessory_id, qty, price_cents) ; twofa_codes(user_id, channel, code, expires_at, consumed)
+Se existir mecanismo de import de SQL/migrations, use os arquivos com esses nomes: 001_init.sql, 002_rls.sql, 003_seed.sql (conteúdos conforme descrito acima). Caso o Lovable não suporte migrations, crie as tabelas via Supabase (UI ou CLI) e prossiga.
+Edge Functions (criar em /supabase/functions)
+Utilitários compartilhados (/_shared)
+supa.ts: cria admin client (SUPABASE_URL,  UPABASE_SERVICE_ROLE_KEY) + helper json(). utils.ts: requireEnv(name).  pagarme.ts: integração v5 (base https://api.pagar.me/core/v5), funções: createOrderChargeCardToken({ amount_cents, description, card_token, customer, metadata, installments }) createOrderChargePix({ amount_cents, description, customer, metadata }) createOrderChargeBoleto({ amount_cents, description, customer, due_at, metadata })
+Autenticação Basic com PAGARME_API_KEY.
+Funções
+2fa-send: recebe { user_id, channel: 'sms'|'whatsapp'|'email' }, cria OTP (6 dígitos, 5 min), salva em twofa_codes e (TODO) envia via provedor (log por enquanto).  2fa-verify: { user_id, code }, valida twofa_codes, marca consumed.  rentals-quote: { rental_plan_id } → retorna { price_cents } usando base_price_cents (+futuras price_rules). rentals-create: { user_id, store_id, bike_id, rental_plan_id, start_at }  Checa bike.status === 'available', cria rental(status='reserved'), atualiza moto reserved, cria invoice(pending).  Retorna { rental_id, invoice_id, amount_cents }. rentals-close: { rental_id, km_end } → fecha aluguel (completed), moto available.
+payments-create (Pagar.me):
+Body: { ref_type:'rental'|'accessory', ref_id,  ethod:'card'|'pix'|'boleto', card_token?, installments?, due_at?, customer }  Busca invoice (no caso rental), cria ordem/charge no Pagar.me: Cartão: payment_method:"credit_card", card:{ token: <card_token> } (auth_and_capture) PIX: payment_method:"pix" (retornar pix_qr_code e pix_copy_paste) Boleto: payment_method:"boleto" (retornar boleto_url) Atualiza invoices com gateway_payment_id, status, campos PIX/boletos. Retorna { invoice_id, payment_id, status, pix_qr_code, pix_copy_paste, boleto_url }.
+payments-webhook: recebe eventos do Pagar.me (v5).
+Ao detectar paid: invoices.status='paid', paid_at=now(). Se tiver rental_id e rental.status='reserved' → rental='active', bike='rented'. Tratar failed/canceled. (TODO) validar assinatura HMAC se habilitada.
+Variáveis de ambiente (Edge)
+SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+PAGARME_API_KEY (obrigatória)
+PAGARME_API_BASE = https://api.pagar.me/core/v5 (default)
+(Opcional) PAGARME_WEBHOOK_SECRET para assinar webhooks
+(Futuro) credenciais do provedor de SMS/WhatsApp/Email para 2FA
+Front-end (páginas e UX)
+Home: hero, CTA “Alugar agora”.
+Lojas: listar/selecionar loja (cidade/estado, mapa simples opcional).
+Modelos: listar motos por loja, filtrar por cor/ano; detalhe do modelo (fotos do Storage).
+Planos: diário, mensal, anual; exibir preço base.
+Cotação/Reserva: wizard com passos: Loja → Modelo/Cor → Plano → Resumo de preço → Confirmar (chama rentals-create).
+Checkout:
+Aba Cartão: incluir <script src="https://checkout.pagar.me/v1/tokenizecard.js" data-pagarmecheckout-app-id="PUBLIC_KEY"></script>.
+Form com campos do cartão (capturados pelo script), ao sucesso obter card_token e chamar payments-create com { method:"card", card_token, installments, customer }.
+Aba PIX: chamar payments-create com { method:"pix" } e exibir QR code + copia-e-cola.
+Aba Boleto: chamar payments-create com { method:"boleto", due_at } e exibir link do boleto.
+Minha Conta: dados pessoais, 2FA (enviar/verificar), histórico de aluguéis e faturas.
+Acessórios: grid de produtos, adicionar ao pedido (para retirada na loja); (pode ficar com placeholder).
+Admin simples (staff):
+Loja: lista de motos com status, mudar para manutenção, ver reservas ativas.
+Relatórios básicos: aluguéis por período, receita por loja.
+Estados e fluxos
+Após payments-create PIX/Boleto: exibir instruções; o webhook mudará status para paid/active.
+Após cartão aprovado (resposta paid), ir para tela de confirmação.
+A devolução: tela staff para rodar rentals-close com km_end.
+Componentes/serviços (front)
+supabaseClient.ts (SDK com NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY).
+api/payments.ts: wrappers para supabase.functions.invoke('payments-create') e renderização dos retornos.
+useAuth() com listener de sessão; guarda flag is2faVerified após 2fa-verify.
+Renderização de pix_qr_code (canvas ou <img> se vier em base64) e botão “Copiar PIX”.
+Segurança
+Somente card_token sai do front.
+Webhook idempotente: atualizar por gateway_payment_id.
+RLS ativa; profiles somente o próprio usuário.
+Seeds iniciais
+Criar Org=Holding Motos, Franquia SP, Loja Paulista.
+bike_models: Suzuki DR 160 com cores preta, vermelha, azul.
+rental_plans: Diário (R$ 99,00), Mensal (R$ 1.299,00), Anual (R$ 13.999,00).
+Variáveis de ambiente (Front)
+NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY.
+NEXT_PUBLIC_PAGARME_PUBLIC_KEY (para data-pagarmecheckout-app-id).
+Aceite (critérios mínimos)
+Usuário consegue logar, ativar 2FA (simulado), selecionar loja/modelo/plano, criar reserva, pagar (cartão com token, PIX, boleto) e ver status atualizando no perfil após o webhook.
+Staff consegue ver motos e aluguéis da sua loja e concluir devolução.
+Código organizado, tipado, com serviços dedicados para Edge Functions.
+UI limpa, responsiva, com mensagens de erro/sucesso claras.
+
+
+
+PROMPT ORIGINAL DO CHATGPT
+O aplicativo lovable é capaz de gerar o front end e o Back end do app? Ou tenho que usar outro agente para o backend ?
+O Lovable é voltado principalmente para gerar o front-end do seu aplicativo (UI/UX) de forma rápida, usando IA para transformar ideias ou wireframes em telas funcionais. Ele também consegue criar uma estrutura de backend básico (como APIs simples, autenticação, banco de dados conectado), mas não é um backend completo e robusto como os que você desenvolveria manualmente em Node.js, Django, Rails, etc.
+Ou seja:
+✅ Front-end: ele cobre muito bem (design + código pronto).
+⚠️ Back-end: gera algo inicial/simples, mas em projetos mais complexos geralmente é preciso complementar com outro serviço (ex.: Supabase, Firebase, Hasura, ou até um backend customizado em Node/Java/Python).
+👉 Em resumo: você pode começar com o que o Lovable gera, mas para algo profissional e escalável vai precisar integrar ou criar um backend mais robusto com outra tecnologia.
+Quer que eu monte um mapa prático te mostrando:
+O que o Lovable cobre no backend.
+Quais opções extras você pode usar para complementar (ex.: Supabase, Firebase, Backend customizado).
+Como integrar isso ao front-end gerado pelo Lovable?
+
+
+Perfeito! Aqui vai um mapa prático — direto ao ponto — para você usar o Lovable com (ou sem) um backend extra.
+1) O que o Lovable costuma cobrir no “backend”
+CRUD básico via APIs geradas (REST/GraphQL variam conforme template).
+Autenticação simples (login/cadastro) e estados de sessão.
+Integração inicial com DB (models/tabelas comuns; seed de dados).
+Ações server-side leves (ex.: enviar email, webhooks simples).
+Deploy “one-click” em serviços gerenciados do próprio ecossistema.
+➡️ Bom para MVP, POCs e apps de baixa complexidade.
+⚠️ Para regras de negócio complexas, filas, jobs, multi-tenant, auditoria, limites de taxa, etc., normalmente você complementa.
+
+2) Opções para complementar o backend (comparativo rápido)
+A) Supabase (Postgres gerenciado + Auth + Storage + Edge Functions)
+Quando usar: CRUD rápido, SQL forte, realtime, Auth simples, dashboards.
+Pró: velocidade de entrega, Postgres “de verdade”, fácil integrar com front.
+Contra: funções complexas exigem Edge Functions/Row Level Security bem planejadas.
+B) Firebase (Auth + Firestore/RTDB + Functions + Storage)
+Quando usar: apps mobile/web com realtime e push; protótipos muito rápidos.
+Pró: escala do Google, SDK excelente.
+Contra: Firestore não é relacional; consultas complexas podem complicar custo.
+C) Hasura (GraphQL sobre Postgres)
+Quando usar: quer GraphQL “out of the box” performático sobre Postgres.
+Pró: permissões granulares, subscriptions, velocidade.
+Contra: lógica complexa vai para “Actions/Remote Schemas” ou serviços externos.
+D) Backend custom (Node.js/TypeScript – Express/NestJS; Python – Django/FastAPI; Ruby – Rails; Java – Spring)
+Quando usar: regras de negócio ricas, integrações corporativas, compliance, filas, domínios complexos.
+Pró: total controle, arquiteturas limpas (DDD, Clean), testes e observabilidade.
+Contra: mais tempo e equipe; necessidade de engenharia DevOps.
+E) BaaS/Workflow (n8n, Inngest, Temporal, Make/Zapier p/ integrações)
+Quando usar: orquestração de rotinas, ETL, jobs assíncronos sem “reinventar roda”.
+Pró: acelera automações e jobs.
+Contra: evite acoplar demais lógica crítica a automações de terceiros.
+
+3) Como integrar ao front gerado pelo Lovable (passo a passo)
+Cenário 1 — Lovable + Supabase
+Criar projeto no Supabase → definir tabelas e RLS (Row Level Security).
+Auth: habilitar provedores (email, Google, etc.).
+Camada de Acesso: no front Lovable, instale o SDK do Supabase e configure SUPABASE_URL e SUPABASE_ANON_KEY via variáveis de ambiente do projeto.
+APIs: use o client (ex.: supabase.from('tabela').select('*')…) ou crie Edge Functions para lógica sensível.
+Storage: uploads de arquivos direto no Storage do Supabase com regras.
+Deploy: manter as chaves seguras; use service_role apenas no server.
+Cenário 2 — Lovable + Hasura (GraphQL)
+Conecte o Hasura ao Postgres (Supabase/Neon/RDS).
+Modele permissões por role (user/admin/anonymous).
+No front Lovable, use um GraphQL client (Apollo/urql) com token JWT.
+Regras complexas → Actions (chamam seu microserviço) e Remote Schemas.
+Cenário 3 — Lovable + Backend Custom (NestJS)
+Crie API (REST/GraphQL) com rotas versionadas (/v1).
+Implemente Auth (JWT + refresh), RBAC/ABAC e validação (Zod/Class-Validator).
+No front Lovable, crie um API service (fetch/axios) centralizado.
+Para uploads, use URLs pré-assinadas (S3/GCS) para não trafegar pelo backend.
+Observabilidade: logs estruturados, tracing (OpenTelemetry), métricas.
+
+4) Arquitetura recomendada (pragmática para começar bem)
+Fase MVP: Lovable (front) + Supabase (DB/Auth/Storage) + Edge Functions p/ lógica sensível.
+Fase Scale: Introduza um serviço backend (NestJS/Django) para:
+Regras de negócio, integrações (ERP/CRM/pagamentos), filas (BullMQ/SQS), jobs (Inngest/Temporal), auditoria e webhooks robustos.
+Mantenha o Supabase como DB/Auth/Storage (ou migre DB se necessário).
+
+5) Segurança & boas práticas (essenciais)
+Ambientes: dev, staging, prod separados + variáveis via secrets.
+Auth: JWT de curta duração + refresh tokens; senhas com bcrypt/argon2.
+Autorização: RBAC/ABAC; no Supabase, RLS bem testada.
+Validação: sempre valide payload no backend (Zod/JOI/Class-Validator).
+CORS: restrito aos domínios do app.
+Logs: sensíveis ofuscados; retenção e alerta (Datadog/New Relic/Grafana).
+Backups: automáticos e testados (restore drill trimestral).
+
+6) Deploy e CI/CD
+Front Lovable: Vercel/Netlify/Fly (ou o que a plataforma suportar).
+BaaS: Supabase/Firebase cuidam do deploy do backend gerenciado.
+Backend Custom: Docker + Render/Fly/Heroku/Koyeb (rápido) ou Kubernetes (quando fizer sentido).
+CI: GitHub Actions. Pipelines: lint → testes → build → deploy com migrações.
+
+7) Checklist rápido para você decidir agora
+Seu app tem regras de negócio simples? → Lovable + Supabase resolvem.
+Precisa de multi-tenant, faturamento, workflows, integrações? → adicione Backend Custom.
+Precisa de realtime e chat/notificações? → Supabase Realtime / Firebase.
+Quer GraphQL nativo e forte controle de permissão em DB relacional? → Hasura.
+Crescimento previsto? → planeje já filas, jobs e observabilidade.
+
+8) Exemplo de contrato API (para guiar o front do Lovable)
+POST /v1/auth/login
+Body: { email, password }
+Res:  { accessToken, refreshToken, user }
+
+GET  /v1/todos?page=1&limit=20
+Auth: Bearer <accessToken>
+Res:  { data: Todo[], total, page, limit }
+
+POST /v1/todos
+Body: { title, dueDate }
+Res:  { id, title, dueDate, completed }
+
+PUT  /v1/todos/:id
+PATCH /v1/todos/:id
+DELETE /v1/todos/:id
+No front, mantenha um client único que injeta o token e trata 401/403, refresh e retry.
+
+Recomendação final (opinião prática)
+Comece: Lovable (front) + Supabase (Auth/DB/Storage/Edge Functions).
+Evolua: quando a lógica ficar “apertada”, introduza um backend custom (NestJS ou Django), mantendo o Supabase para o que ele faz muito bem.
+Se quiser, me diga o tipo do seu app (ex.: marketplace, CRM, portal, e-commerce) e eu já te devolvo uma arquitetura pronta + passos de implementação na ordem certa.
+Algumas pessoas usam o lovable para o front end e cursor - extensões vs.code / claude.ai. Como ficaria isso no meu app com o front já feito usando lovable + supabase
+
+Show de bola — dá pra combinar Lovable (front) + Supabase (Auth/DB/Storage/Edge Functions) com Cursor/VS Code + Claude.ai para acelerar o backend e a lógica “server-side”. Aqui vai um guia enxuto, mas completo, para você plugar tudo.
+Visão geral (arquitetura)
+Front: gerado no Lovable (React/Next, por ex.).
+BaaS: Supabase (Postgres + Auth + Storage + Edge Functions).
+Backend complementar (opcional): serviço Node (NestJS/Fastify) ou Python (FastAPI) quando a lógica crescer.
+Dev AI: Cursor (IDE com agente) + extensões VS Code; Claude.ai para specs, refactors e PR reviews.
+Fluxo de trabalho recomendado
+Repos
+app-frontend/ (Lovable)
+infra-supa/ (migrations + policies + seeds + edge functions)
+svc-api/ (opcional, backend custom)
+Ambientes & .env
+FRONTEND: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
+EDGE FUNCTIONS / BACKEND: SUPABASE_SERVICE_ROLE_KEY, segredos de terceiros (Stripe, etc.)
+Separe dev, staging, prod.
+Desenvolvimento local
+Instale Supabase CLI → supabase start (Postgres local + Studio)
+Rode o front Lovable com as chaves NEXT_PUBLIC_*
+Se usar Edge Functions: supabase functions serve
+(Opcional) svc-api com docker compose up.
+Uso do Cursor/VS Code + Claude
+No Cursor, abra o repo (infra-supa e/ou svc-api) e:
+Gere migrations SQL a partir do schema desejado.
+Escreva RLS policies com base nas regras de negócio.
+Crie Edge Functions (Deno) para lógica sensível.
+Gere testes E2E (Playwright) e unitários (Vitest/Jest).
+No Claude.ai, use como “arquiteto/editor”:
+Colar contratos de API/erros do front → gerar endpoints/handlers.
+Pedir refactor seguro (com diffs) e revisão de PR.
+Produzir testes e docs (README, ADRs curtos).
+Integração Front (Lovable) ↔ Supabase (essencial)
+SDK (front):
+import { createClient } from '@supabase/supabase-js'
+export const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+Auth: implemente login/logout + listener de sessão; proteja páginas com HOCs/guards.
+Tipos gerados: supabase gen types typescript --project-id <id> --schema public > src/types/supabase.ts → evita bug de coluna/campo.
+Banco & RLS (modelo mínimo)
+Migration (exemplo)
+create table public.todos (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id),
+  title text not null,
+  due_date date,
+  completed boolean default false,
+  created_at timestamptz default now()
+);
+RLS
+alter table public.todos enable row level security;
+
+create policy "own read" on public.todos
+for select using (auth.uid() = user_id);
+
+create policy "own write" on public.todos
+for insert with check (auth.uid() = user_id);
+
+create policy "own update" on public.todos
+for update using (auth.uid() = user_id);
+
+create policy "own delete" on public.todos
+for delete using (auth.uid() = user_id);
+Seed (dev)
+insert into public.todos (user_id, title) values ('00000000-0000-0000-0000-000000000000', 'Primeira tarefa');
+Edge Functions (quando precisa lógica server-side)
+Ex.: checagem de negócio antes de criar pedido
+// /supabase/functions/create-order/index.ts
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js'
+
+serve(async (req) => {
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const { user_id, items } = await req.json()
+
+  // validação, cálculo, limites, etc.
+  // grava em tabelas relacionais…
+  // retorna payload seguro ao front
+
+  return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } })
+})
+Chame do front com chave anon via invoke:
+const { data, error } = await supabase.functions.invoke('create-order', { body: { user_id, items } })
+Backend custom (quando o Edge não basta)
+Quando: múltiplas integrações (ERP/CRM), filas, workflows complexos, auditoria pesada, multi-tenant, relatórios grandes.
+Stack (exemplo):
+NestJS + Prisma (se Postgres do Supabase) ou TypeORM
+Auth JWT + refresh; RBAC/ABAC
+Filas: BullMQ (Redis) / SQS
+Observabilidade: OpenTelemetry + logs estruturados
+Contrato de API (exemplo)
+GET /v1/reports?from=...&to=...
+POST /v1/orders
+O front do Lovable consome via fetch/axios centralizado (um API client).
+Prompts prontos (Cursor/Claude)
+Gerar RLS a partir de regra de negócio
+“Gere políticas RLS para a tabela invoices onde o usuário só vê/edita as faturas do seu org_id, admins veem todas. Considere roles: user, admin. Devolva SQL e testes com cenários de falha.”
+Criar Edge Function com validação
+“Crie uma Supabase Edge Function issue-refund que valida permissões (apenas admin), consulta payments, chama webhook externo, atualiza refunds, e retorna JSON com status. Inclua tratamento de erros e logs.”
+Refactor orientado a tipos
+“Refatore este service para TypeScript estrito, crie tipos Result<T, E>, e cubra com testes unitários. Envie diff e riscos.”
+Extensões úteis no VS Code/Cursor
+ESLint + Prettier (qualidade contínua)
+GitHub Copilot (complementa Cursor)
+Supabase (explorar DB/Policies)
+REST Client ou Thunder Client (testar APIs)
+Error Lens (feedback de linting em linha)
+CI/CD (curto e bom)
+GitHub Actions:
+infra-supa: checa SQL, aplica migrações em staging, roda testes de Edge Functions.
+app-frontend: lint → build → deploy (Vercel/Netlify).
+svc-api: testes → build Docker → deploy (Render/Fly/Koyeb ou K8s).
+Proteja main com PR + review (use Claude para revisar diffs grandes).
+Decisão prática para você agora
+Se o front já está no Lovable e o app é de média complexidade:
+Modele o DB no Supabase + crie RLS (com ajuda do Cursor/Claude).
+Escreva Edge Functions para a lógica sensível (billing, limites, webhooks).
+Só crie um backend custom quando sentir dor (integrações/filas/workflows).
+Automatize migrations + seeds + testes no CI.
+Se me disser em 1 linha o tipo do seu app (ex.: marketplace B2B, CRM de clínicas, portal de mentoria), eu te entrego um pacote base (tabelas, RLS, 2 Edge Functions e as rotas do front) já no formato que você pluga no seu repo.
+
+
+Estamos falando de um app web que basicamente controla o aluguel de motocicletas. Existe uma holding que vende franquias de lojas de aluguel de motos. O app vai ficar nas mãos dos clientes finais, pessoas comuns que alugam motos. Existem planos de locação por tempo, dias, meses e ano. Existem tipos de motos, iniciarei com a suzuki DR 160 em 3 cores. Mas o sistema deve permitir o cadastro de usuários, autenticação de 2 fatores usando SMS, WhatsApp ou e-mail, cadastro dos planos de locação, cadastro de lojas, cadastro de motos com outras marcas e modelos. Além disso o sistema deve permitir que o usuário pague a conta pelo aplicativo usando cartão de crédito ou débito, pix ou boleto. Ha também um cadastro de acessórios, como calças, capacetes, etc que podem ser comprados e pagos igualmente para retirada na loja física.
+
+
+Perfeito, Alexandre! Abaixo vai um pacote-base para seu app web de aluguel de motocicletas usando Front (Lovable) + Supabase (Auth/DB/Storage/Edge Functions) + (opcional) serviço backend quando crescer. Foquei em: multi‐tenant (holding → franquias → lojas), 2FA, planos, frota, pagamentos (cartão, PIX, boleto), e venda de acessórios.
+Arquitetura (visão rápida)
+Front (Lovable): Next/React, consumo via SDK do Supabase + chamadas às Edge Functions.
+Supabase:
+Auth (email + OTP) e suporte a 2FA via Edge Function com SMS/WhatsApp.
+DB Postgres (RLS ativada).
+Storage (fotos de motos, acessórios, documentos).
+Edge Functions (Deno) p/ lógica: cálculo de preço, criação de aluguel, pagamentos e webhooks.
+Pagamento (BR): escolha 1 gateway com PIX + cartão + boleto. Opções comuns: Pagar.me (Stone), Mercado Pago, Iugu, Gerencianet/Efí. (Você pode começar com um e trocar depois via camada de abstração na Edge Function.)
+
+Modelo de dados (essencial, com multi-tenant)
+Prefixo org_ para a holding/franquias; cada loja pertence a uma franquia; RLS garante isolamento.
+-- ORGANIZAÇÃO / MULTI-TENANT
+create table orgs (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz default now()
+);
+
+create table org_members (
+  org_id uuid references orgs(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
+  role text check (role in ('owner','admin','manager','staff','viewer')) not null,
+  primary key (org_id, user_id)
+);
+
+create table franchises (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  name text not null,
+  cnpj text,
+  created_at timestamptz default now()
+);
+
+create table stores (
+  id uuid primary key default gen_random_uuid(),
+  franchise_id uuid not null references franchises(id) on delete cascade,
+  name text not null,
+  address jsonb,       -- {street, number, city, state, zip, lat, lng}
+  phone text,
+  opening_hours jsonb, -- {mon:{open:"08:00", close:"18:00"}, ...}
+  created_at timestamptz default now()
+);
+
+-- USUÁRIOS (perfil do cliente final e staff)
+create table profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  full_name text,
+  phone text,
+  document_id text,    -- CPF
+  is_staff boolean default false,
+  created_at timestamptz default now()
+);
+
+-- CATÁLOGO DE MOTOS
+create table bike_models (
+  id uuid primary key default gen_random_uuid(),
+  brand text not null,             -- ex: 'Suzuki'
+  model text not null,             -- ex: 'DR 160'
+  engine_cc int,
+  year int,
+  colors text[] default '{}',      -- ex: {'preta','vermelha','azul'}
+  specs jsonb
+);
+
+create table bikes (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references stores(id) on delete cascade,
+  bike_model_id uuid not null references bike_models(id),
+  color text not null,
+  plate text unique,
+  vin text unique,
+  status text not null default 'available' 
+    check (status in ('available','reserved','rented','maintenance','inactive')),
+  odometer int default 0,
+  created_at timestamptz default now()
+);
+
+-- PLANOS DE LOCAÇÃO
+create table rental_plans (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  name text not null,              -- ex: "Diário", "Mensal", "Anual"
+  duration_type text not null check (duration_type in ('hour','day','month','year')),
+  duration_qty int not null,       -- ex: 1, 7, 30, 12
+  base_price_cents int not null,   -- preço base
+  price_rules jsonb,               -- upgrades, franquia km, caução, etc.
+  active boolean default true
+);
+
+-- ALUGUÉIS
+create table rentals (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id),
+  store_id uuid not null references stores(id),
+  bike_id uuid not null references bikes(id),
+  rental_plan_id uuid not null references rental_plans(id),
+  start_at timestamptz not null,
+  end_at timestamptz,
+  status text not null default 'pending' 
+    check (status in ('pending','reserved','active','completed','canceled','overdue')),
+  price_cents int,
+  deposit_cents int default 0,
+  km_start int,
+  km_end int,
+  created_at timestamptz default now()
+);
+
+-- PAGAMENTOS (PIX/cartão/boleto) + faturas
+create table invoices (
+  id uuid primary key default gen_random_uuid(),
+  rental_id uuid references rentals(id) on delete set null,
+  user_id uuid not null references auth.users(id),
+  amount_cents int not null,
+  currency text default 'BRL',
+  status text not null default 'pending'
+    check (status in ('pending','paid','failed','refunded','canceled')),
+  gateway text,                     -- 'pagarme','mercadopago','iugu','efi'
+  gateway_payment_id text,          -- id no PSP
+  boleto_url text,                  -- se aplicável
+  pix_qr_code text,                 -- se aplicável
+  pix_copy_paste text,              -- se aplicável
+  created_at timestamptz default now(),
+  paid_at timestamptz
+);
+
+-- ACESSÓRIOS (venda na retirada)
+create table accessories (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  name text not null,
+  description text,
+  price_cents int not null,
+  stock int default 0,
+  active boolean default true,
+  image_url text
+);
+
+create table accessory_orders (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id),
+  store_id uuid not null references stores(id),
+  status text not null default 'pending'
+    check (status in ('pending','paid','ready','delivered','canceled','refunded')),
+  total_cents int not null,
+  created_at timestamptz default now()
+);
+
+create table accessory_order_items (
+  order_id uuid references accessory_orders(id) on delete cascade,
+  accessory_id uuid references accessories(id),
+  qty int not null check (qty > 0),
+  price_cents int not null,
+  primary key (order_id, accessory_id)
+);
+
+create index on rentals(user_id);
+create index on rentals(store_id);
+create index on bikes(store_id);
+create index on invoices(user_id);
+
+RLS (exemplos práticos)
+Clientes só enxergam seus próprios aluguéis/faturas.
+Staff enxerga dados da sua loja/franquia.
+Holding (roles owner/admin) enxerga tudo da organização.
+-- Rentals
+alter table rentals enable row level security;
+
+create policy "customer_reads_own_rentals"
+on rentals for select using (auth.uid() = user_id);
+
+create policy "customer_writes_own_rentals"
+on rentals for insert with check (auth.uid() = user_id);
+
+-- Exemplo de acesso por staff da loja
+create policy "store_staff_reads_store_rentals"
+on rentals for select using (
+  exists (
+    select 1
+    from org_members om
+    join stores s on s.id = rentals.store_id
+    join franchises f on f.id = s.franchise_id
+    where om.user_id = auth.uid()
+      and om.org_id  = f.org_id
+      and om.role in ('admin','manager','staff')
+  )
+);
+Repita a lógica para bikes, invoices, accessory_orders. Você pode refinar com org_id e store_id em cada tabela para simplificar as policies.
+
+Fluxos críticos
+1) Autenticação + 2FA (SMS/WhatsApp/email)
+Supabase Auth para login básico (email+link mágico ou email+senha).
+2FA: implemente via Edge Function:
+Usuário loga.
+Front chama POST /2fa/send (Edge) informando canal: sms, whatsapp ou email.
+Função gera OTP (6 dígitos), salva em tabela twofa_codes(user_id, code, channel, expires_at, consumed), envia via provedor (Zenvia, Twilio, WhatsApp Cloud API, email do Supabase).
+Front envia POST /2fa/verify com o código. Se ok, marca consumed=true e sobe um flag de sessão (ex.: claim JWT personalizado) p/ liberar rotas sensíveis.
+Tabela simples para 2FA:
+create table twofa_codes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
+  channel text check (channel in ('sms','whatsapp','email')) not null,
+  code text not null,
+  expires_at timestamptz not null,
+  consumed boolean default false,
+  created_at timestamptz default now()
+);
+2) Aluguel (reserva → retirada → devolução)
+Cliente escolhe plano, loja, moto (cor, disponibilidade).
+Front chama Edge Function rentals/quote → calcula preço (plano + caução + extras).
+Cliente confirma → Edge rentals/create: cria rental (status reserved), gera invoice pending.
+Pagamento aprovado (webhook) → rental.status='active', bikes.status='rented'.
+Devolução → Edge rentals/close: registra km_end, calcula extras (km excedente, multa atraso), gera/atualiza invoice e muda rental p/ completed e bike available.
+3) Pagamentos (PIX, cartão, boleto)
+Edge payments/create: recebe {ref_type: 'rental'|'accessory', ref_id, method: 'card'|'pix'|'boleto'}:
+Cria/atualiza invoice.
+Chama SDK/HTTP do gateway, retorna client_secret (cartão), pix (qr/copy&paste), boleto_url.
+Edge payments/webhook: recebe eventos do PSP:
+paid → invoices.status='paid' + timbra paid_at.
+Se for rental → ativa aluguel; se for accessory → order.status='paid'.
+failed/canceled → atualiza status e notifica.
+Reembolso: Edge payments/refund (opcional).
+
+Edge Functions (sugestões de pastas/nomes)
+functions/2fa-send & functions/2fa-verify
+functions/rentals-quote (regras de preço; lê rental_plans.price_rules)
+functions/rentals-create
+functions/rentals-close
+functions/payments-create
+functions/payments-webhook (rota pública)
+functions/inventory-update (manutenção, mudança de status)
+Exemplo mini de função (Deno) para cotação:
+// rentals-quote/index.ts
+import { serve } from "https://deno.land/std/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js";
+
+serve(async (req) => {
+  try {
+    const { rental_plan_id, start_at, duration_override } = await req.json();
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+    const { data: plan } = await supabase
+      .from("rental_plans")
+      .select("*")
+      .eq("id", rental_plan_id)
+      .single();
+
+    // cálculo simplificado (ex.: base + extras do price_rules)
+    const price = plan.base_price_cents; 
+    return new Response(JSON.stringify({ price_cents: price }), { headers: { "content-type": "application/json" }});
+  } catch (e) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 400 });
+  }
+});
+
+Integração no Front (Lovable)
+SDK Supabase para operações CRUD simples (catálogos, perfil).
+Para ações sensíveis e pagamentos → chame as Edge Functions.
+Sessão com 2FA: após verify, salve um estado (ex.: is2fa=true) em store global (Zustand/Redux) e/ou cookie seguro.
+
+Pagamentos no Brasil (escolha prática)
+Pagar.me (Stone): bom para crédito/débito e PIX; webhooks estáveis; split de pagamentos (se precisar no futuro).
+Mercado Pago: onboarding rápido; PIX forte; boa UX; também boleto.
+Iugu / Efí (Gerencianet): tradicionais para boleto + PIX.
+Estratégia: implemente uma interface única na Edge (payments/create) e atrás dela um “driver” por PSP. Assim você troca de gateway sem mexer no front.
+
+Roadmap de entrega (4 sprints enxutas)
+Sprint 1 – Fundações
+Tabelas + RLS (orgs, franchises, stores, bike_models, bikes, rental_plans, profiles).
+Auth e perfis; upload de imagens (Storage).
+Listagem/busca de motos por loja.
+Sprint 2 – Aluguel
+rentals-quote, rentals-create, rentals-close.
+Estados da moto (available→reserved→rented→available).
+Telas: escolher plano/loja/moto, resumo de cotação.
+Sprint 3 – 2FA + Pagamentos
+2FA (send/verify).
+payments-create (cartão/PIX/boleto) + payments-webhook.
+Fatura no perfil do usuário.
+Sprint 4 – Acessórios + Operação de Loja
+Catálogo de acessórios + pedidos.
+Retirada na loja (marcar ready/delivered).
+Relatórios básicos (alugueis por período, receita por loja).
+
+Variáveis de ambiente (mínimo)
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+SUPABASE_URL (Edge)
+SUPABASE_SERVICE_ROLE_KEY (Edge)
+PAYMENTS_PROVIDER = pagarme|mercadopago|iugu|efi
+PAYMENTS_SECRET/API_KEY (do PSP escolhido)
+2FA_SMS_PROVIDER + credenciais (Zenvia/Twilio) ou WhatsApp Cloud API
+APP_BASE_URL (para webhooks/links de retorno)
+
+Recomendação prática para você agora
+Suba as tabelas e RLS acima no Supabase.
+Implemente as 4 Edge Functions de base: 2fa-send, 2fa-verify, rentals-quote, rentals-create.
+Escolha 1 PSP (eu iria de Pagar.me ou Mercado Pago) e faça payments-create + payments-webhook.
+Ligue tudo no front do Lovable com telas simples de cotação → pagamento → confirmação.
+Se quiser, eu te entrego o pacote de migrações SQL + skeleton das Edge Functions já estruturado para colar no seu repositório (nomes de pastas e comandos do Supabase CLI). Quer com Pagar.me ou Mercado Pago primeiro?
+
+
+Perfeito — vou te entregar um pacote-base já preparado para Lovable (front) + Supabase + Pagar.me.
+Inclui: migrations SQL, seeds da DR 160, RLS essenciais, e skeleton de Edge Functions (2FA, cotação/criação/conclusão de aluguel, criação de pagamento e webhook do Pagar.me).
+
+0) Estrutura de pastas (sugestão)
+/supabase
+  /migrations
+    001_init.sql
+    002_rls.sql
+    003_seed.sql
+  /functions
+    /_shared
+      supa.ts
+      utils.ts
+      pagarme.ts
+    /2fa-send
+      index.ts
+    /2fa-verify
+      index.ts
+    /rentals-quote
+      index.ts
+    /rentals-create
+      index.ts
+    /rentals-close
+      index.ts
+    /payments-create
+      index.ts
+    /payments-webhook
+      index.ts
+
+1) Migrations (SQL)
+001_init.sql
+-- ORGANIZAÇÃO / MULTI-TENANT
+create table orgs (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz default now()
+);
+
+create table org_members (
+  org_id uuid references orgs(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
+  role text check (role in ('owner','admin','manager','staff','viewer')) not null,
+  primary key (org_id, user_id)
+);
+
+create table franchises (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  name text not null,
+  cnpj text,
+  created_at timestamptz default now()
+);
+
+create table stores (
+  id uuid primary key default gen_random_uuid(),
+  franchise_id uuid not null references franchises(id) on delete cascade,
+  name text not null,
+  address jsonb,
+  phone text,
+  opening_hours jsonb,
+  created_at timestamptz default now()
+);
+
+-- PERFIS (clientes e staff)
+create table profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  full_name text,
+  phone text,
+  document_id text,
+  is_staff boolean default false,
+  created_at timestamptz default now()
+);
+
+-- CATÁLOGO DE MOTOS
+create table bike_models (
+  id uuid primary key default gen_random_uuid(),
+  brand text not null,
+  model text not null,
+  engine_cc int,
+  year int,
+  colors text[] default '{}',
+  specs jsonb
+);
+
+create table bikes (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references stores(id) on delete cascade,
+  bike_model_id uuid not null references bike_models(id),
+  color text not null,
+  plate text unique,
+  vin text unique,
+  status text not null default 'available'
+    check (status in ('available','reserved','rented','maintenance','inactive')),
+  odometer int default 0,
+  created_at timestamptz default now()
+);
+
+-- PLANOS
+create table rental_plans (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  name text not null,
+  duration_type text not null check (duration_type in ('hour','day','month','year')),
+  duration_qty int not null,
+  base_price_cents int not null,
+  price_rules jsonb,
+  active boolean default true
+);
+
+-- ALUGUÉIS
+create table rentals (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id),
+  store_id uuid not null references stores(id),
+  bike_id uuid not null references bikes(id),
+  rental_plan_id uuid not null references rental_plans(id),
+  start_at timestamptz not null,
+  end_at timestamptz,
+  status text not null default 'pending'
+    check (status in ('pending','reserved','active','completed','canceled','overdue')),
+  price_cents int,
+  deposit_cents int default 0,
+  km_start int,
+  km_end int,
+  created_at timestamptz default now()
+);
+
+-- FATURAS / PAGAMENTOS
+create table invoices (
+  id uuid primary key default gen_random_uuid(),
+  rental_id uuid references rentals(id) on delete set null,
+  user_id uuid not null references auth.users(id),
+  amount_cents int not null,
+  currency text default 'BRL',
+  status text not null default 'pending'
+    check (status in ('pending','paid','failed','refunded','canceled')),
+  gateway text,                     -- 'pagarme'
+  gateway_payment_id text,          -- id no PSP
+  boleto_url text,
+  pix_qr_code text,
+  pix_copy_paste text,
+  created_at timestamptz default now(),
+  paid_at timestamptz
+);
+
+-- ACESSÓRIOS
+create table accessories (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  name text not null,
+  description text,
+  price_cents int not null,
+  stock int default 0,
+  active boolean default true,
+  image_url text
+);
+
+create table accessory_orders (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id),
+  store_id uuid not null references stores(id),
+  status text not null default 'pending'
+    check (status in ('pending','paid','ready','delivered','canceled','refunded')),
+  total_cents int not null,
+  created_at timestamptz default now()
+);
+
+create table accessory_order_items (
+  order_id uuid references accessory_orders(id) on delete cascade,
+  accessory_id uuid references accessories(id),
+  qty int not null check (qty > 0),
+  price_cents int not null,
+  primary key (order_id, accessory_id)
+);
+
+-- 2FA
+create table twofa_codes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
+  channel text check (channel in ('sms','whatsapp','email')) not null,
+  code text not null,
+  expires_at timestamptz not null,
+  consumed boolean default false,
+  created_at timestamptz default now()
+);
+
+-- Índices úteis
+create index on rentals(user_id);
+create index on rentals(store_id);
+create index on bikes(store_id);
+create index on invoices(user_id);
+create index on invoices(gateway_payment_id);
+002_rls.sql
+-- Ativar RLS
+alter table rentals enable row level security;
+alter table invoices enable row level security;
+alter table accessory_orders enable row level security;
+alter table accessory_order_items enable row level security;
+alter table bikes enable row level security;
+alter table stores enable row level security;
+alter table rental_plans enable row level security;
+alter table profiles enable row level security;
+
+-- Clientes veem/alteram somente seus próprios dados
+create policy "profiles_self" on profiles
+for select using (auth.uid() = user_id);
+create policy "profiles_self_upd" on profiles
+for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Rentals
+create policy "rentals_read_own" on rentals
+for select using (auth.uid() = user_id);
+create policy "rentals_insert_own" on rentals
+for insert with check (auth.uid() = user_id);
+
+-- Staff por organização (admin/manager/staff)
+-- Exemplo para leitura de rentals por staff de mesma org (via store -> franchise -> org)
+create policy "rentals_staff_read_by_org" on rentals
+for select using (
+  exists (
+    select 1
+    from org_members om
+    join stores s on s.id = rentals.store_id
+    join franchises f on f.id = s.franchise_id
+    where om.user_id = auth.uid()
+      and om.org_id  = f.org_id
+      and om.role in ('owner','admin','manager','staff')
+  )
+);
+
+-- Invoices
+create policy "invoices_read_own" on invoices
+for select using (auth.uid() = user_id);
+
+-- Orders de acessórios (cliente)
+create policy "acc_orders_read_own" on accessory_orders
+for select using (auth.uid() = user_id);
+create policy "acc_orders_insert_own" on accessory_orders
+for insert with check (auth.uid() = user_id);
+
+-- Catálogo de planos/motos/lojas: leitura aberta (ou por org, se preferir)
+create policy "stores_read_all" on stores for select using (true);
+create policy "bikes_read_all" on bikes for select using (true);
+create policy "rental_plans_read_all" on rental_plans for select using (true);
+003_seed.sql
+-- Org e franquia iniciais (exemplo)
+insert into orgs (id, name) values
+  ('00000000-0000-0000-0000-000000000001','Holding Motos');
+
+insert into franchises (id, org_id, name) values
+  ('00000000-0000-0000-0000-000000000101','00000000-0000-0000-000000000001','Franquia SP');
+
+insert into stores (id, franchise_id, name, address) values
+  ('00000000-0000-0000-0000-000000000201','00000000-0000-0000-000000000101','Loja Paulista', '{"city":"São Paulo","state":"SP"}'::jsonb);
+
+-- Modelo DR 160 com 3 cores
+insert into bike_models (brand, model, engine_cc, year, colors, specs)
+values ('Suzuki','DR 160',160,2025,ARRAY['preta','vermelha','azul'],'{"abs":"sim"}'::jsonb);
+
+-- Planos base
+insert into rental_plans (org_id, name, duration_type, duration_qty, base_price_cents, price_rules)
+values
+  ('00000000-0000-0000-0000-000000000001','Diário','day',1,9900,'{}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001','Mensal','month',1,129900,'{}'::jsonb),
+  ('00000000-0000-0000-0000-000000000001','Anual','year',1,1399900,'{}'::jsonb);
+Com o Supabase CLI, rode:
+supabase start (local) → supabase db push para aplicar.
+
+2) Edge Functions — utilitários compartilhados
+/supabase/functions/_shared/supa.ts
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+export function adminClient() {
+  const url = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+export function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+/supabase/functions/_shared/utils.ts
+export function requireEnv(name: string): string {
+  const v = Deno.env.get(name);
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+export function assert(condition: any, msg: string) {
+  if (!condition) throw new Error(msg);
+}
+/supabase/functions/_shared/pagarme.ts
+import { requireEnv } from "./utils.ts";
+
+/**
+ * Skeleton de integração com Pagar.me.
+ * Ajuste endpoints/payloads conforme o ambiente e versão da API.
+ */
+const API_KEY = requireEnv("PAGARME_API_KEY");
+const API_BASE = Deno.env.get("PAGARME_API_BASE") || "https://api.pagar.me"; // ajuste se necessário
+
+function authHeaders() {
+  // Muitos PSPs usam Basic com chave; ajuste conforme docs do Pagar.me
+  const basic = btoa(`${API_KEY}:`);
+  return {
+    "authorization": `Basic ${basic}`,
+    "content-type": "application/json",
+  };
+}
+
+export type CreatePaymentInput = {
+  method: "card" | "pix" | "boleto";
+  amount_cents: number;
+  description?: string;
+  metadata?: Record<string,string>;
+  customer?: {

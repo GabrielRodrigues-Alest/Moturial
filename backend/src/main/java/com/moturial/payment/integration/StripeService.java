@@ -3,17 +3,17 @@ package com.moturial.payment.integration;
 import com.moturial.payment.domain.dto.PaymentRequest;
 import com.moturial.payment.domain.dto.CardData;
 import com.moturial.payment.domain.dto.CustomerData;
+import com.moturial.payment.domain.dto.PaymentResult;
 import com.moturial.payment.domain.enums.PaymentMethod;
 import com.moturial.payment.domain.enums.PaymentStatus;
 import com.moturial.payment.exception.PaymentProcessingException;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
-import com.stripe.model.PaymentIntent;
-import com.stripe.model.PaymentMethod;
 import com.stripe.model.Customer;
+import com.stripe.model.PaymentIntent;
+import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentMethodCreateParams;
-import com.stripe.param.CustomerCreateParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,10 +62,10 @@ public class StripeService {
             Customer customer = createOrRetrieveCustomer(request.getCustomer());
 
             // Criar método de pagamento
-            PaymentMethod paymentMethod = createPaymentMethod(cardData);
+            com.stripe.model.PaymentMethod paymentMethod = createPaymentMethod(cardData);
 
             // Vincular método de pagamento ao cliente
-            paymentMethod.attach(PaymentMethod.AttachParams.builder()
+            paymentMethod.attach(com.stripe.model.PaymentMethod.AttachParams.builder()
                 .setCustomer(customer.getId())
                 .build());
 
@@ -225,7 +225,7 @@ public class StripeService {
         return Customer.create(paramsBuilder.build());
     }
 
-    private PaymentMethod createPaymentMethod(CardData cardData) throws StripeException {
+    private com.stripe.model.PaymentMethod createPaymentMethod(CardData cardData) throws StripeException {
         PaymentMethodCreateParams.Builder paramsBuilder = PaymentMethodCreateParams.builder()
             .setType(PaymentMethodCreateParams.Type.CARD);
 
@@ -242,7 +242,7 @@ public class StripeService {
                 .build());
         }
 
-        return PaymentMethod.create(paramsBuilder.build());
+        return com.stripe.model.PaymentMethod.create(paramsBuilder.build());
     }
 
     private Map<String, String> createMetadata(PaymentRequest request) {
