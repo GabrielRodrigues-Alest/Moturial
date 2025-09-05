@@ -154,7 +154,7 @@ public class PaymentValidator {
     /**
      * Valida método de pagamento
      */
-    private void validatePaymentMethod(com.moturial.payment.domain.enums.PaymentMethod paymentMethod) {
+        private void validatePaymentMethod(com.moturial.payment.domain.enums.PaymentMethodType paymentMethod) {
         if (paymentMethod == null) {
             throw new PaymentValidationException("Método de pagamento é obrigatório");
         }

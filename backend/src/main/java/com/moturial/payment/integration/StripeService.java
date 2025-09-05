@@ -4,16 +4,18 @@ import com.moturial.payment.domain.dto.PaymentRequest;
 import com.moturial.payment.domain.dto.CardData;
 import com.moturial.payment.domain.dto.CustomerData;
 import com.moturial.payment.domain.dto.PaymentResult;
-import com.moturial.payment.domain.enums.PaymentMethod;
+import com.moturial.payment.domain.enums.PaymentMethodType;
 import com.moturial.payment.domain.enums.PaymentStatus;
 import com.moturial.payment.exception.PaymentProcessingException;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Customer;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.PaymentMethod;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentMethodCreateParams;
+import com.stripe.param.PaymentMethodAttachParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,32 +64,35 @@ public class StripeService {
             Customer customer = createOrRetrieveCustomer(request.getCustomer());
 
             // Criar método de pagamento
-            com.stripe.model.PaymentMethod paymentMethod = createPaymentMethod(cardData);
+            PaymentMethod paymentMethod = createPaymentMethod(cardData);
 
-            // Vincular método de pagamento ao cliente
-            paymentMethod.attach(com.stripe.model.PaymentMethod.AttachParams.builder()
-                .setCustomer(customer.getId())
-                .build());
+            // Anexar o PaymentMethod ao Customer
+            paymentMethod.attach(PaymentMethodAttachParams.builder().setCustomer(customer.getId()).build());
 
             // Criar PaymentIntent
             PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
                 .setAmount(convertToCents(request.getAmount()))
                 .setCurrency(request.getCurrency().toLowerCase())
                 .setCustomer(customer.getId())
-                .setPaymentMethod(paymentMethod.getId())
+                .setConfirmationMethod(PaymentIntentCreateParams.ConfirmationMethod.MANUAL)
                 .setConfirm(true)
-                .setDescription(request.getDescription())
-                .setMetadata(createMetadata(request));
+                .putAllMetadata(createMetadata(request));
 
             if (request.getInstallments() > 1) {
-                paramsBuilder.setPaymentMethodOptions(PaymentIntentCreateParams.PaymentMethodOptions.builder()
-                    .setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
-                        .setInstallments(PaymentIntentCreateParams.PaymentMethodOptions.Card.Installments.builder()
-                            .setPlan(PaymentIntentCreateParams.PaymentMethodOptions.Card.Installments.Plan.FIXED_COUNT)
-                            .setCount(request.getInstallments())
+                PaymentIntentCreateParams.PaymentMethodOptions.Card.Installments installments = 
+                    PaymentIntentCreateParams.PaymentMethodOptions.Card.Installments.builder()
+                        .setPlan(PaymentIntentCreateParams.PaymentMethodOptions.Card.Installments.Plan.builder()
+                            .setCount((long) request.getInstallments())
+                            .setType(PaymentIntentCreateParams.PaymentMethodOptions.Card.Installments.Plan.Type.FIXED_COUNT)
                             .build())
-                        .build())
-                    .build());
+                        .build();
+
+                paramsBuilder.setPaymentMethodOptions(
+                    PaymentIntentCreateParams.PaymentMethodOptions.builder()
+                        .setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
+                            .setInstallments(installments)
+                            .build())
+                        .build());
             }
 
             PaymentIntent paymentIntent = PaymentIntent.create(paramsBuilder.build());
@@ -97,7 +102,7 @@ public class StripeService {
                 .status(mapStripeStatus(paymentIntent.getStatus()))
                 .amount(request.getAmount())
                 .currency(request.getCurrency())
-                .paymentMethod(PaymentMethod.CARD)
+                                .paymentMethod(PaymentMethodType.CARD)
                 .installments(request.getInstallments())
                 .description(request.getDescription())
                 .metadata(paymentIntent.getMetadata())
@@ -127,9 +132,8 @@ public class StripeService {
                 .setAmount(convertToCents(request.getAmount()))
                 .setCurrency(request.getCurrency().toLowerCase())
                 .setCustomer(customer.getId())
-                .setPaymentMethodTypes(java.util.Arrays.asList("pix"))
-                .setDescription(request.getDescription())
-                .setMetadata(createMetadata(request))
+                .addAllPaymentMethodType(java.util.Arrays.asList("pix"))
+                .putAllMetadata(createMetadata(request))
                 .build();
 
             PaymentIntent paymentIntent = PaymentIntent.create(params);
@@ -139,7 +143,7 @@ public class StripeService {
                 .status(mapStripeStatus(paymentIntent.getStatus()))
                 .amount(request.getAmount())
                 .currency(request.getCurrency())
-                .paymentMethod(PaymentMethod.PIX)
+                                .paymentMethod(PaymentMethodType.PIX)
                 .installments(1)
                 .description(request.getDescription())
                 .metadata(paymentIntent.getMetadata())
@@ -168,7 +172,7 @@ public class StripeService {
                 .status(mapStripeStatus(paymentIntent.getStatus()))
                 .amount(convertFromCents(paymentIntent.getAmount()))
                 .currency(paymentIntent.getCurrency().toUpperCase())
-                .paymentMethod(mapStripePaymentMethod(paymentIntent.getPaymentMethodTypes().get(0)))
+                                .paymentMethod(mapStripePaymentMethod(paymentIntent.getPaymentMethod()))
                 .description(paymentIntent.getDescription())
                 .metadata(paymentIntent.getMetadata())
                 .build();
@@ -225,33 +229,33 @@ public class StripeService {
         return Customer.create(paramsBuilder.build());
     }
 
-    private com.stripe.model.PaymentMethod createPaymentMethod(CardData cardData) throws StripeException {
+    private PaymentMethod createPaymentMethod(CardData cardData) throws StripeException {
         PaymentMethodCreateParams.Builder paramsBuilder = PaymentMethodCreateParams.builder()
             .setType(PaymentMethodCreateParams.Type.CARD);
 
         if (StringUtils.hasText(cardData.getToken())) {
-            paramsBuilder.setCard(PaymentMethodCreateParams.Card.builder()
-                .setToken(cardData.getToken())
-                .build());
+            paramsBuilder.setCard(PaymentMethodCreateParams.Token.builder().setToken(cardData.getToken()).build());
         } else {
-            paramsBuilder.setCard(PaymentMethodCreateParams.Card.builder()
-                .setNumber(cardData.getNumber())
-                .setExpMonth(Long.parseLong(cardData.getExpiryDate().split("/")[0]))
-                .setExpYear(Long.parseLong("20" + cardData.getExpiryDate().split("/")[1]))
-                .setCvc(cardData.getCvv())
-                .build());
+            paramsBuilder.setCard(
+                PaymentMethodCreateParams.CardDetails.builder()
+                    .setNumber(cardData.getNumber())
+                    .setExpMonth(Long.parseLong(cardData.getExpiryDate().split("/")[0]))
+                    .setExpYear(Long.parseLong("20" + cardData.getExpiryDate().split("/")[1]))
+                    .setCvc(cardData.getCvv())
+                    .build()
+            );
         }
 
-        return com.stripe.model.PaymentMethod.create(paramsBuilder.build());
+        return PaymentMethod.create(paramsBuilder.build());
     }
 
     private Map<String, String> createMetadata(PaymentRequest request) {
         Map<String, String> metadata = new HashMap<>();
         metadata.put("user_id", request.getUserId());
-        metadata.put("payment_method", request.getPaymentMethod().getCode());
+                metadata.put("payment_method", request.getPaymentMethod().name().toLowerCase());
         metadata.put("installments", String.valueOf(request.getInstallments()));
         
-        if (request.getMetadata() != null) {
+        if (!"card".equals(request.getPaymentMethod().name().toLowerCase())) {
             request.getMetadata().forEach((key, value) -> 
                 metadata.put(key, value != null ? value.toString() : ""));
         }
@@ -277,12 +281,15 @@ public class StripeService {
         };
     }
 
-    private PaymentMethod mapStripePaymentMethod(String stripePaymentMethod) {
+    private PaymentMethodType mapStripePaymentMethod(String stripePaymentMethod) {
+        if (stripePaymentMethod == null) {
+            return null; // Ou lançar uma exceção
+        }
         return switch (stripePaymentMethod) {
-            case "card" -> PaymentMethod.CARD;
-            case "pix" -> PaymentMethod.PIX;
-            case "boleto" -> PaymentMethod.BOLETO;
-            default -> PaymentMethod.CARD;
+            case "card" -> PaymentMethodType.CARD;
+            case "pix" -> PaymentMethodType.PIX;
+            case "boleto" -> PaymentMethodType.BOLETO;
+            default -> throw new IllegalArgumentException("Método de pagamento desconhecido: " + stripePaymentMethod);
         };
     }
 }

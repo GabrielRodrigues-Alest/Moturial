@@ -1,6 +1,6 @@
 package com.moturial.payment.domain.dto;
 
-import com.moturial.payment.domain.enums.PaymentMethod;
+import com.moturial.payment.domain.enums.PaymentMethodType;
 import com.moturial.payment.domain.enums.PaymentStatus;
 import java.math.BigDecimal;
 import java.util.Map;
@@ -17,7 +17,7 @@ public class PaymentResult {
     private PaymentStatus status;
     private BigDecimal amount;
     private String currency;
-    private PaymentMethod paymentMethod;
+    private PaymentMethodType paymentMethod;
     private Integer installments;
     private String description;
     private Map<String, String> metadata;
@@ -48,7 +48,7 @@ public class PaymentResult {
     public PaymentStatus getStatus() { return status; }
     public BigDecimal getAmount() { return amount; }
     public String getCurrency() { return currency; }
-    public PaymentMethod getPaymentMethod() { return paymentMethod; }
+    public PaymentMethodType getPaymentMethod() { return paymentMethod; }
     public Integer getInstallments() { return installments; }
     public String getDescription() { return description; }
     public Map<String, String> getMetadata() { return metadata; }
@@ -67,7 +67,7 @@ public class PaymentResult {
         private PaymentStatus status;
         private BigDecimal amount;
         private String currency;
-        private PaymentMethod paymentMethod;
+        private PaymentMethodType paymentMethod;
         private Integer installments;
         private String description;
         private Map<String, String> metadata;
@@ -97,7 +97,7 @@ public class PaymentResult {
             return this;
         }
 
-        public Builder paymentMethod(PaymentMethod paymentMethod) {
+        public Builder paymentMethod(PaymentMethodType paymentMethod) {
             this.paymentMethod = paymentMethod;
             return this;
         }

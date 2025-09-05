@@ -1,5 +1,5 @@
 # Multi-stage build para otimizar o tamanho da imagem
-FROM maven:3.9.5-openjdk-17 AS build
+FROM maven:3.9.8-eclipse-temurin-21-alpine AS build
 
 # Definir diretório de trabalho
 WORKDIR /app
@@ -12,10 +12,13 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # Stage de produção
-FROM openjdk:17-jre-slim
+FROM eclipse-temurin:21-jre-alpine
+
+# Instalar curl para o Health Check
+RUN apk --no-cache add curl
 
 # Criar usuário não-root para segurança
-RUN groupadd -r moturial && useradd -r -g moturial moturial
+RUN addgroup -S moturial && adduser -S -G moturial moturial
 
 # Definir diretório de trabalho
 WORKDIR /app

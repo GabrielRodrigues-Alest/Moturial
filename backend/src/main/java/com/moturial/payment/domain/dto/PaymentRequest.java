@@ -1,6 +1,6 @@
 package com.moturial.payment.domain.dto;
 
-import com.moturial.payment.domain.enums.PaymentMethod;
+import com.moturial.payment.domain.enums.PaymentMethodType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
@@ -32,7 +32,7 @@ public class PaymentRequest {
     private String currency;
 
     @NotNull(message = "Método de pagamento é obrigatório")
-    private PaymentMethod paymentMethod;
+    private PaymentMethodType paymentMethod;
 
     @Min(value = 1, message = "Parcelas deve ser pelo menos 1")
     @Max(value = 12, message = "Parcelas não pode exceder 12")
@@ -60,7 +60,7 @@ public class PaymentRequest {
     public PaymentRequest() {}
 
     public PaymentRequest(String userId, BigDecimal amount, String currency, 
-                         PaymentMethod paymentMethod, CustomerData customer) {
+                         PaymentMethodType paymentMethod, CustomerData customer) {
         this.userId = userId;
         this.amount = amount;
         this.currency = currency;
@@ -78,8 +78,8 @@ public class PaymentRequest {
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }
 
-    public PaymentMethod getPaymentMethod() { return paymentMethod; }
-    public void setPaymentMethod(PaymentMethod paymentMethod) { this.paymentMethod = paymentMethod; }
+    public PaymentMethodType getPaymentMethod() { return paymentMethod; }
+    public void setPaymentMethod(PaymentMethodType paymentMethod) { this.paymentMethod = paymentMethod; }
 
     public Integer getInstallments() { return installments; }
     public void setInstallments(Integer installments) { this.installments = installments; }

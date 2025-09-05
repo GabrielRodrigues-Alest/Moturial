@@ -40,7 +40,7 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     /**
      * Lista pagamentos por método de pagamento
      */
-    List<Payment> findByPaymentMethodOrderByCreatedAtDesc(com.moturial.payment.domain.enums.PaymentMethod paymentMethod);
+        List<Payment> findByPaymentMethodOrderByCreatedAtDesc(com.moturial.payment.domain.enums.PaymentMethodType paymentMethod);
 
     /**
      * Busca pagamentos criados em um período específico

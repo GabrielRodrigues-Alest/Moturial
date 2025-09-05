@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
-import org.springframework.web.servlet.handler.HandlerInterceptorAdapter;
+import org.springframework.web.servlet.HandlerInterceptor;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -42,12 +42,13 @@ public class WebConfig implements WebMvcConfigurer {
     /**
      * Interceptor para logging de requests
      */
-    public static class RequestLoggingInterceptor extends HandlerInterceptorAdapter {
+    public static class RequestLoggingInterceptor implements HandlerInterceptor {
 
         @Override
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
             String correlationId = UUID.randomUUID().toString();
             request.setAttribute("correlationId", correlationId);
+            request.setAttribute("startTime", System.currentTimeMillis());
             
             logger.info("Request iniciado", Map.of(
                 "correlationId", correlationId,
@@ -63,13 +64,15 @@ public class WebConfig implements WebMvcConfigurer {
         @Override
         public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
             String correlationId = (String) request.getAttribute("correlationId");
+            long startTime = (Long) request.getAttribute("startTime");
+            long duration = System.currentTimeMillis() - startTime;
             
             logger.info("Request finalizado", Map.of(
                 "correlationId", correlationId,
                 "method", request.getMethod(),
                 "uri", request.getRequestURI(),
                 "status", response.getStatus(),
-                "duration", System.currentTimeMillis() - request.getAttribute("startTime")
+                "duration", duration
             ));
         }
     }

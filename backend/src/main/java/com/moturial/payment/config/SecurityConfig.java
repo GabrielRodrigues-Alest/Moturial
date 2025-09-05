@@ -1,13 +1,19 @@
 package com.moturial.payment.config;
 
+import com.moturial.payment.security.ApiKeyAuthenticationFilter;
+import com.moturial.payment.security.ApiKeyAuthenticationProvider;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -19,14 +25,17 @@ import java.util.List;
 /**
  * Configuração de segurança seguindo princípios OWASP
  * 
- * Implementa headers de segurança, CORS restritivo e autenticação
+ * Implementa headers de segurança, CORS restritivo e autenticação via API Key.
  * 
  * @author Moturial Team
- * @version 1.0.0
+ * @version 1.1.0
  */
 @Configuration
 @EnableWebSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
+
+    private final ApiKeyAuthenticationProvider apiKeyAuthenticationProvider;
 
     @Value("${security.cors.allowed-origins:http://localhost:3000,http://localhost:5173}")
     private String allowedOrigins;
@@ -41,7 +50,7 @@ public class SecurityConfig {
     private boolean allowCredentials;
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http, AuthenticationManager authenticationManager) throws Exception {
         http
             // Desabilitar CSRF para APIs stateless
             .csrf(AbstractHttpConfigurer::disable)
@@ -61,49 +70,45 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health").permitAll()
                 .requestMatchers("/actuator/info").permitAll()
                 
-                // Endpoints protegidos
-                .requestMatchers("/api/v1/payments/**").authenticated()
+                // Endpoints protegidos por API Key
+                .requestMatchers("/api/v1/payments/**", "/api/v1/test/**").hasRole("API_USER")
                 .requestMatchers("/actuator/**").hasRole("ADMIN")
                 
                 // Negar todo o resto
                 .anyRequest().denyAll()
             )
             
+            // Adicionar filtro de autenticação de API Key
+            .addFilterBefore(new ApiKeyAuthenticationFilter(authenticationManager), UsernamePasswordAuthenticationFilter.class)
+
             // Configurar headers de segurança
             .headers(headers -> headers
-                // Content Security Policy
                 .contentSecurityPolicy(csp -> csp
-                    .policyDirectives("default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none';")
+                    .policyDirectives("default-src 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests")
                 )
-                
-                // HTTP Strict Transport Security
                 .httpStrictTransportSecurity(hsts -> hsts
-                    .maxAgeInSeconds(31536000)
-                    .includeSubdomains(true)
+                    .includeSubDomains(true)
                     .preload(true)
+                    .maxAgeInSeconds(31536000)
                 )
-                
-                // X-Content-Type-Options
-                .contentTypeOptions()
-                
-                // X-Frame-Options
-                .frameOptions().deny()
-                
-                // X-XSS-Protection
-                .xssProtection(xss -> xss
-                    .block(true)
+                .frameOptions(frameOptions -> frameOptions.deny())
+                .referrerPolicy(referrer -> referrer
+                    .policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)
                 )
-                
-                // Referrer Policy
-                .referrerPolicy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN)
-                
-                // Permissions Policy
                 .permissionsPolicy(permissions -> permissions
                     .policy("geolocation=(), microphone=(), camera=()")
                 )
             );
 
         return http.build();
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(HttpSecurity http) throws Exception {
+        AuthenticationManagerBuilder authenticationManagerBuilder = 
+            http.getSharedObject(AuthenticationManagerBuilder.class);
+        authenticationManagerBuilder.authenticationProvider(apiKeyAuthenticationProvider);
+        return authenticationManagerBuilder.build();
     }
 
     @Bean

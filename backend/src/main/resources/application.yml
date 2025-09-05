@@ -61,7 +61,10 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
-security:
+moturial:
+  security:
+    api:
+    key: ${API_KEY:moturial-secret-key-dev-5a7b9c1d2e3f4g5h6j7k8l9m0n1o2p3q}
   jwt:
     secret: ${JWT_SECRET:your-256-bit-secret-key-here-change-in-production}
     expiration: ${JWT_EXPIRATION:86400000}

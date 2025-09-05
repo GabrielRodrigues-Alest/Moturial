@@ -3,7 +3,7 @@ package com.moturial.payment.validation;
 import com.moturial.payment.domain.dto.CardData;
 import com.moturial.payment.domain.dto.CustomerData;
 import com.moturial.payment.domain.dto.PaymentRequest;
-import com.moturial.payment.domain.enums.PaymentMethod;
+import com.moturial.payment.domain.enums.PaymentMethodType;
 import com.moturial.payment.exception.PaymentValidationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +38,9 @@ class PaymentValidatorTest {
         ReflectionTestUtils.setField(validator, "maxAmount", new BigDecimal("1000000"));
         ReflectionTestUtils.setField(validator, "minAmount", new BigDecimal("100"));
         ReflectionTestUtils.setField(validator, "maxInstallments", 12);
+        ReflectionTestUtils.setField(validator, "cardNumberPattern", "^[0-9]{13,19}$");
+        ReflectionTestUtils.setField(validator, "cvvPattern", "^[0-9]{3,4}$");
+        ReflectionTestUtils.setField(validator, "expiryPattern", "^(0[1-9]|1[0-2])/([0-9]{2})$");
 
         // Setup dados válidos
         validCustomerData = new CustomerData("João Silva", "joao@email.com");
@@ -47,7 +50,7 @@ class PaymentValidatorTest {
         validPaymentRequest.setUserId("user123");
         validPaymentRequest.setAmount(new BigDecimal("100.00"));
         validPaymentRequest.setCurrency("BRL");
-        validPaymentRequest.setPaymentMethod(PaymentMethod.CARD);
+                validPaymentRequest.setPaymentMethod(PaymentMethodType.CARD);
         validPaymentRequest.setInstallments(1);
         validPaymentRequest.setDescription("Teste de pagamento");
         validPaymentRequest.setCustomer(validCustomerData);
@@ -112,13 +115,13 @@ class PaymentValidatorTest {
 
     @Test
     void validatePaymentRequest_InvalidCurrency() {
-        validPaymentRequest.setCurrency("INVALID");
+        validPaymentRequest.setCurrency("AAA");
         
         PaymentValidationException exception = assertThrows(PaymentValidationException.class, () -> {
             validator.validatePaymentRequest(validPaymentRequest);
         });
         
-        assertEquals("Moeda não suportada: INVALID", exception.getMessage());
+        assertEquals("Moeda não suportada: AAA", exception.getMessage());
     }
 
     @Test
@@ -146,7 +149,7 @@ class PaymentValidatorTest {
 
     @Test
     void validateCardData_InvalidCardNumber() {
-        validCardData.setNumber("123456789012"); // Inválido
+        validCardData.setNumber("4242424242424243"); // Válido em formato, inválido no checksum
         
         PaymentValidationException exception = assertThrows(PaymentValidationException.class, () -> {
             validator.validateCardData(validCardData);

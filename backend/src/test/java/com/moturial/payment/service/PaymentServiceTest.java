@@ -2,7 +2,7 @@ package com.moturial.payment.service;
 
 import com.moturial.payment.domain.dto.*;
 import com.moturial.payment.domain.entity.Payment;
-import com.moturial.payment.domain.enums.PaymentMethod;
+import com.moturial.payment.domain.enums.PaymentMethodType;
 import com.moturial.payment.domain.enums.PaymentStatus;
 import com.moturial.payment.exception.PaymentProcessingException;
 import com.moturial.payment.exception.PaymentValidationException;
@@ -62,7 +62,7 @@ class PaymentServiceTest {
         validPaymentRequest.setUserId("user123");
         validPaymentRequest.setAmount(new BigDecimal("100.00"));
         validPaymentRequest.setCurrency("BRL");
-        validPaymentRequest.setPaymentMethod(PaymentMethod.CARD);
+                validPaymentRequest.setPaymentMethod(PaymentMethodType.CARD);
         validPaymentRequest.setInstallments(1);
         validPaymentRequest.setDescription("Teste de pagamento");
         validPaymentRequest.setCustomer(validCustomerData);
@@ -73,7 +73,7 @@ class PaymentServiceTest {
             .status(PaymentStatus.APPROVED)
             .amount(new BigDecimal("100.00"))
             .currency("BRL")
-            .paymentMethod(PaymentMethod.CARD)
+                        .paymentMethod(PaymentMethodType.CARD)
             .installments(1)
             .description("Teste de pagamento")
             .build();
@@ -84,7 +84,7 @@ class PaymentServiceTest {
         validPayment.setUserId("user123");
         validPayment.setAmount(new BigDecimal("100.00"));
         validPayment.setCurrency("BRL");
-        validPayment.setPaymentMethod(PaymentMethod.CARD);
+                validPayment.setPaymentMethod(PaymentMethodType.CARD);
         validPayment.setStatus(PaymentStatus.APPROVED);
         validPayment.setInstallments(1);
         validPayment.setDescription("Teste de pagamento");
@@ -105,7 +105,7 @@ class PaymentServiceTest {
         assertEquals("pi_test123", result.getExternalId());
         assertEquals(new BigDecimal("100.00"), result.getAmount());
         assertEquals("BRL", result.getCurrency());
-        assertEquals(PaymentMethod.CARD, result.getPaymentMethod());
+                assertEquals(PaymentMethodType.CARD, result.getPaymentMethod());
 
         verify(paymentValidator).validatePaymentRequest(validPaymentRequest);
         verify(paymentValidator).validateCardData(validCardData);
@@ -150,7 +150,7 @@ class PaymentServiceTest {
     @Test
     void processPixPayment_Success() {
         // Arrange
-        validPaymentRequest.setPaymentMethod(PaymentMethod.PIX);
+                validPaymentRequest.setPaymentMethod(PaymentMethodType.PIX);
         validPaymentRequest.setCard(null);
         
         when(paymentRepository.save(any(Payment.class))).thenReturn(validPayment);
@@ -202,7 +202,7 @@ class PaymentServiceTest {
 
         verify(paymentRepository).findByExternalId("pi_test123");
         verify(stripeService).getPaymentStatus("pi_test123");
-        verify(paymentRepository, times(2)).save(any(Payment.class));
+        verify(paymentRepository, times(1)).save(any(Payment.class));
     }
 
     @Test
@@ -238,7 +238,7 @@ class PaymentServiceTest {
 
         verify(paymentRepository).findByExternalId("pi_test123");
         verify(stripeService).cancelPayment("pi_test123");
-        verify(paymentRepository, times(2)).save(any(Payment.class));
+        verify(paymentRepository, times(1)).save(any(Payment.class));
     }
 
     @Test

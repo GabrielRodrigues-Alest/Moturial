@@ -1,9 +1,8 @@
 package com.moturial.payment.service;
 
-import com.moturial.payment.domain.dto.*;
+import com.moturial.payment.domain.dto.PaymentRequest;
+import com.moturial.payment.domain.dto.PaymentResult;
 import com.moturial.payment.domain.entity.Payment;
-import com.moturial.payment.domain.enums.PaymentMethod;
-import com.moturial.payment.domain.enums.PaymentStatus;
 import com.moturial.payment.exception.PaymentProcessingException;
 import com.moturial.payment.exception.PaymentValidationException;
 import com.moturial.payment.integration.StripeService;
@@ -74,6 +73,9 @@ public class PaymentService {
 
             return result;
 
+        } catch (PaymentValidationException e) {
+            logger.warn("Falha na validação do pagamento com cartão: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
             logger.error("Erro ao processar pagamento com cartão: {}", e.getMessage(), e);
             throw new PaymentProcessingException("Erro ao processar pagamento: " + e.getMessage(), e);
@@ -104,6 +106,9 @@ public class PaymentService {
 
             return result;
 
+        } catch (PaymentValidationException e) {
+            logger.warn("Falha na validação do pagamento PIX: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
             logger.error("Erro ao processar pagamento PIX: {}", e.getMessage(), e);
             throw new PaymentProcessingException("Erro ao processar pagamento PIX: " + e.getMessage(), e);
@@ -136,6 +141,9 @@ public class PaymentService {
             // Se não encontrado localmente, consultar Stripe
             return stripeService.getPaymentStatus(externalId);
 
+        } catch (PaymentValidationException e) {
+            logger.warn("Falha na validação ao buscar status: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
             logger.error("Erro ao recuperar status do pagamento: {}", e.getMessage(), e);
             throw new PaymentProcessingException("Erro ao recuperar status: " + e.getMessage(), e);
@@ -168,6 +176,9 @@ public class PaymentService {
 
             return result;
 
+        } catch (PaymentValidationException e) {
+            logger.warn("Falha na validação ao cancelar pagamento: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
             logger.error("Erro ao cancelar pagamento: {}", e.getMessage(), e);
             throw new PaymentProcessingException("Erro ao cancelar pagamento: " + e.getMessage(), e);

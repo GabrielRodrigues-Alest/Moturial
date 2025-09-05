@@ -2,7 +2,7 @@ package com.moturial.payment.config;
 
 import io.micrometer.core.aop.TimedAspect;
 import io.micrometer.core.instrument.MeterRegistry;
-import org.springframework.boot.actuator.autoconfigure.metrics.MeterRegistryCustomizer;
+import org.springframework.boot.actuate.autoconfigure.metrics.MeterRegistryCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -21,7 +21,7 @@ public class ActuatorConfig {
      * Customização do MeterRegistry com tags da aplicação
      */
     @Bean
-    public MeterRegistryCustomizer<MeterRegistry> metricsCommonTags() {
+        public MeterRegistryCustomizer<MeterRegistry> metricsCommonTags() {
         return registry -> registry.config()
             .commonTags("application", "moturial-payment-service")
             .commonTags("version", "1.0.0")

@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import com.moturial.payment.domain.enums.PaymentMethodType;
+import com.moturial.payment.domain.enums.PaymentStatus;
 import java.util.UUID;
 
 /**
@@ -52,7 +54,7 @@ public class Payment {
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_method", nullable = false)
     @NotNull(message = "Método de pagamento é obrigatório")
-    private PaymentMethod paymentMethod;
+    private PaymentMethodType paymentMethod;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
@@ -104,7 +106,7 @@ public class Payment {
     public Payment() {}
 
     public Payment(String externalId, String userId, BigDecimal amount, String currency, 
-                   PaymentMethod paymentMethod, Integer installments, String description) {
+                   PaymentMethodType paymentMethod, Integer installments, String description) {
         this.externalId = externalId;
         this.userId = userId;
         this.amount = amount;
@@ -133,8 +135,8 @@ public class Payment {
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }
 
-    public PaymentMethod getPaymentMethod() { return paymentMethod; }
-    public void setPaymentMethod(PaymentMethod paymentMethod) { this.paymentMethod = paymentMethod; }
+    public PaymentMethodType getPaymentMethod() { return paymentMethod; }
+    public void setPaymentMethod(PaymentMethodType paymentMethod) { this.paymentMethod = paymentMethod; }
 
     public PaymentStatus getStatus() { return status; }
     public void setStatus(PaymentStatus status) { this.status = status; }
