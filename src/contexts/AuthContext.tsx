@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -7,6 +7,15 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  roles: string[];
+  memberships: Array<{
+    org_id: string | null;
+    franchise_id: string | null;
+    store_id: string | null;
+    role: string;
+  }>;
+  hasRole: (role: string) => boolean;
+  isAdmin: boolean;
   signUp: (email: string, password: string, fullName: string, phone: string) => Promise<{ error: any }>;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
@@ -28,6 +37,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [memberships, setMemberships] = useState<AuthContextType['memberships']>([]);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -49,6 +59,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Load memberships/roles whenever user changes
+  useEffect(() => {
+    const loadMemberships = async () => {
+      if (!user) {
+        setMemberships([]);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('org_members')
+          .select('org_id, franchise_id, store_id, role')
+          .eq('user_id', user.id)
+          .eq('active', true);
+        if (error) throw error;
+        setMemberships((data ?? []).map((m: any) => ({
+          org_id: m.org_id ?? null,
+          franchise_id: m.franchise_id ?? null,
+          store_id: m.store_id ?? null,
+          role: String(m.role)
+        })));
+      } catch (err: any) {
+        setMemberships([]);
+        toast({
+          title: 'Erro ao carregar permissões',
+          description: err?.message ?? 'Falha ao consultar permissões do usuário.',
+          variant: 'destructive'
+        });
+      }
+    };
+    void loadMemberships();
+  }, [user, toast]);
+
+  const roles = useMemo(() => Array.from(new Set(memberships.map(m => m.role))), [memberships]);
+  const hasRole = (role: string) => roles.includes(role);
+  const isAdmin = hasRole('admin');
 
   const signUp = async (email: string, password: string, fullName: string, phone: string) => {
     try {
@@ -199,6 +245,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     session,
     loading,
+    roles,
+    memberships,
+    hasRole,
+    isAdmin,
     signUp,
     signIn,
     signOut,
