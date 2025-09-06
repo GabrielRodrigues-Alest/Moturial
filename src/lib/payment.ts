@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { apiClient } from '@/lib/api';
 
 // Tipos para integração com o backend Java
 export interface PaymentRequest {
@@ -39,98 +39,50 @@ export interface PaymentResult {
   metadata?: Record<string, string>;
 }
 
-// Configuração do backend Java
-const JAVA_BACKEND_URL = import.meta.env.VITE_JAVA_BACKEND_URL || 'http://localhost:8080/api/v1';
+// Note: Authentication is now handled by the apiClient
 
-// Função para obter token de autenticação
-async function getAuthToken(): Promise<string> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) {
-    throw new Error('Usuário não autenticado');
-  }
-  return session.access_token;
-}
-
-// Função para fazer requisições autenticadas
-async function authenticatedRequest(endpoint: string, options: RequestInit = {}): Promise<Response> {
-  const token = await getAuthToken();
-  
-  const response = await fetch(`${JAVA_BACKEND_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || `Erro HTTP ${response.status}`);
-  }
-
-  return response;
-}
-
-// API de pagamentos
+// API de pagamentos - now using centralized apiClient
 export const paymentApi = {
   /**
    * Processa pagamento com cartão
    */
   async processCardPayment(request: PaymentRequest): Promise<PaymentResult> {
-    const response = await authenticatedRequest('/payments/card', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    });
-
-    return response.json();
+    return apiClient.post('/payments/card', request);
   },
 
   /**
    * Processa pagamento via PIX
    */
   async processPixPayment(request: PaymentRequest): Promise<PaymentResult> {
-    const response = await authenticatedRequest('/payments/pix', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    });
-
-    return response.json();
+    return apiClient.post('/payments/pix', request);
   },
 
   /**
    * Consulta status de um pagamento
    */
   async getPaymentStatus(externalId: string): Promise<PaymentResult> {
-    const response = await authenticatedRequest(`/payments/${externalId}/status`);
-    return response.json();
+    return apiClient.get(`/payments/${externalId}/status`);
   },
 
   /**
    * Cancela um pagamento
    */
   async cancelPayment(externalId: string): Promise<PaymentResult> {
-    const response = await authenticatedRequest(`/payments/${externalId}/cancel`, {
-      method: 'POST',
-    });
-
-    return response.json();
+    return apiClient.post(`/payments/${externalId}/cancel`);
   },
 
   /**
    * Lista pagamentos de um usuário
    */
   async getUserPayments(userId: string): Promise<any[]> {
-    const response = await authenticatedRequest(`/payments/user/${userId}`);
-    return response.json();
+    return apiClient.get(`/payments/user/${userId}`);
   },
 
   /**
    * Health check do serviço
    */
-  async healthCheck(): Promise<string> {
-    const response = await fetch(`${JAVA_BACKEND_URL}/payments/health`);
-    return response.text();
+  async healthCheck(): Promise<{ status: string; timestamp: string }> {
+    return apiClient.get('/actuator/health');
   },
 };
 

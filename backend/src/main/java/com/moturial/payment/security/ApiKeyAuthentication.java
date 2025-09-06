@@ -45,4 +45,12 @@ public class ApiKeyAuthentication extends AbstractAuthenticationToken {
         // O principal é a própria chave de API.
         return apiKey;
     }
+
+    /**
+     * Retorna a chave de API.
+     * @return A chave de API.
+     */
+    public String getApiKey() {
+        return apiKey;
+    }
 }

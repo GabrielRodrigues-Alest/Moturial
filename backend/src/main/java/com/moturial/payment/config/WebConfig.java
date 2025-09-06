@@ -1,12 +1,12 @@
 package com.moturial.payment.config;
 
-import com.moturial.payment.exception.PaymentProcessingException;
-import com.moturial.payment.exception.PaymentValidationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.NonNull;
+import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -35,7 +35,7 @@ public class WebConfig implements WebMvcConfigurer {
     private static final Logger logger = LoggerFactory.getLogger(WebConfig.class);
 
     @Override
-    public void addInterceptors(InterceptorRegistry registry) {
+    public void addInterceptors(@NonNull InterceptorRegistry registry) {
         registry.addInterceptor(new RequestLoggingInterceptor());
     }
 
@@ -45,7 +45,7 @@ public class WebConfig implements WebMvcConfigurer {
     public static class RequestLoggingInterceptor implements HandlerInterceptor {
 
         @Override
-        public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        public boolean preHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull Object handler) {
             String correlationId = UUID.randomUUID().toString();
             request.setAttribute("correlationId", correlationId);
             request.setAttribute("startTime", System.currentTimeMillis());
@@ -62,7 +62,7 @@ public class WebConfig implements WebMvcConfigurer {
         }
 
         @Override
-        public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
+        public void afterCompletion(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull Object handler, @Nullable Exception ex) {
             String correlationId = (String) request.getAttribute("correlationId");
             long startTime = (Long) request.getAttribute("startTime");
             long duration = System.currentTimeMillis() - startTime;
@@ -77,61 +77,6 @@ public class WebConfig implements WebMvcConfigurer {
         }
     }
 
-    /**
-     * Tratamento de exceções de validação
-     */
-    @ExceptionHandler(PaymentValidationException.class)
-    public ResponseEntity<Map<String, Object>> handleValidationException(PaymentValidationException ex, HttpServletRequest request) {
-        String correlationId = (String) request.getAttribute("correlationId");
-        
-        logger.warn("Erro de validação", Map.of(
-            "correlationId", correlationId,
-            "error", ex.getMessage(),
-            "errorCode", ex.getErrorCode(),
-            "field", ex.getField()
-        ));
-
-        Map<String, Object> errorResponse = createErrorResponse(
-            "https://moturial.com/errors/validation",
-            "Erro de Validação",
-            HttpStatus.BAD_REQUEST.value(),
-            ex.getMessage(),
-            request.getRequestURI(),
-            correlationId,
-            ex.getErrorCode(),
-            ex.getField()
-        );
-
-        return ResponseEntity.badRequest().body(errorResponse);
-    }
-
-    /**
-     * Tratamento de exceções de processamento
-     */
-    @ExceptionHandler(PaymentProcessingException.class)
-    public ResponseEntity<Map<String, Object>> handleProcessingException(PaymentProcessingException ex, HttpServletRequest request) {
-        String correlationId = (String) request.getAttribute("correlationId");
-        
-        logger.error("Erro de processamento", Map.of(
-            "correlationId", correlationId,
-            "error", ex.getMessage(),
-            "errorCode", ex.getErrorCode(),
-            "externalErrorCode", ex.getExternalErrorCode()
-        ));
-
-        Map<String, Object> errorResponse = createErrorResponse(
-            "https://moturial.com/errors/processing",
-            "Erro de Processamento",
-            HttpStatus.INTERNAL_SERVER_ERROR.value(),
-            "Erro interno do servidor",
-            request.getRequestURI(),
-            correlationId,
-            ex.getErrorCode(),
-            ex.getExternalErrorCode()
-        );
-
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
-    }
 
     /**
      * Tratamento de exceções genéricas

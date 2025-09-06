@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
+import { User, Session, authApi, ApiError } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 
 interface AuthContextType {
@@ -9,9 +8,9 @@ interface AuthContextType {
   loading: boolean;
   roles: string[];
   memberships: Array<{
-    org_id: string | null;
-    franchise_id: string | null;
-    store_id: string | null;
+    orgId: string | null;
+    franchiseId: string | null;
+    storeId: string | null;
     role: string;
   }>;
   hasRole: (role: string) => boolean;
@@ -41,56 +40,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { toast } = useToast();
 
   useEffect(() => {
-    // Set up auth state listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
+    // Check for existing session on mount
+    const initializeAuth = async () => {
+      try {
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+          const user = await authApi.getCurrentUser();
+          setUser(user);
+          const session = {
+            user,
+            token,
+            expiresAt: localStorage.getItem('auth_expires') || ''
+          };
+          setSession(session);
+        }
+      } catch (error) {
+        // Clear invalid token
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('auth_expires');
+      } finally {
         setLoading(false);
       }
-    );
+    };
 
-    // Check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    initializeAuth();
   }, []);
 
   // Load memberships/roles whenever user changes
   useEffect(() => {
-    const loadMemberships = async () => {
-      if (!user) {
-        setMemberships([]);
-        return;
-      }
-      try {
-        const { data, error } = await supabase
-          .from('org_members')
-          .select('org_id, franchise_id, store_id, role')
-          .eq('user_id', user.id)
-          .eq('active', true);
-        if (error) throw error;
-        setMemberships((data ?? []).map((m: any) => ({
-          org_id: m.org_id ?? null,
-          franchise_id: m.franchise_id ?? null,
-          store_id: m.store_id ?? null,
-          role: String(m.role)
-        })));
-      } catch (err: any) {
-        setMemberships([]);
-        toast({
-          title: 'Erro ao carregar permissões',
-          description: err?.message ?? 'Falha ao consultar permissões do usuário.',
-          variant: 'destructive'
-        });
-      }
-    };
-    void loadMemberships();
-  }, [user, toast]);
+    if (!user) {
+      setMemberships([]);
+      return;
+    }
+
+    // Use memberships from user object (loaded from backend)
+    const userMemberships = user.memberships.map(m => ({
+      orgId: m.orgId ?? null,
+      franchiseId: m.franchiseId ?? null,
+      storeId: m.storeId ?? null,
+      role: m.role
+    }));
+    
+    setMemberships(userMemberships);
+  }, [user]);
 
   const roles = useMemo(() => Array.from(new Set(memberships.map(m => m.role))), [memberships]);
   const hasRole = (role: string) => roles.includes(role);
@@ -98,38 +90,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUp = async (email: string, password: string, fullName: string, phone: string) => {
     try {
-      const redirectUrl = `${window.location.origin}/`;
+      const { user, session } = await authApi.signUp(email, password, fullName, phone);
       
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: redirectUrl,
-          data: {
-            full_name: fullName,
-            phone: phone
-          }
-        }
+      // Store session
+      localStorage.setItem('auth_token', session.token);
+      localStorage.setItem('auth_expires', session.expiresAt);
+      
+      setUser(user);
+      setSession(session);
+      
+      toast({
+        title: "Cadastro realizado!",
+        description: "Bem-vindo ao Moturial!"
       });
 
-      if (error) {
-        toast({
-          title: "Erro no cadastro",
-          description: error.message,
-          variant: "destructive"
-        });
-      } else {
-        toast({
-          title: "Cadastro realizado!",
-          description: "Verifique seu email para confirmar a conta."
-        });
-      }
-
-      return { error };
+      return { error: null };
     } catch (error: any) {
+      const errorMessage = error instanceof ApiError ? error.message : 'Erro no cadastro';
       toast({
         title: "Erro no cadastro",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive"
       });
       return { error };
@@ -138,24 +118,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signIn = async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      const { user, session } = await authApi.signIn(email, password);
+      
+      // Store session
+      localStorage.setItem('auth_token', session.token);
+      localStorage.setItem('auth_expires', session.expiresAt);
+      
+      setUser(user);
+      setSession(session);
+      
+      toast({
+        title: "Login realizado!",
+        description: `Bem-vindo de volta, ${user.fullName}!`
       });
 
-      if (error) {
-        toast({
-          title: "Erro no login",
-          description: error.message,
-          variant: "destructive"
-        });
-      }
-
-      return { error };
+      return { error: null };
     } catch (error: any) {
+      const errorMessage = error instanceof ApiError ? error.message : 'Erro no login';
       toast({
         title: "Erro no login",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive"
       });
       return { error };
@@ -164,18 +146,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        toast({
-          title: "Erro ao sair",
-          description: error.message,
-          variant: "destructive"
-        });
-      }
+      await authApi.signOut();
+      
+      // Clear session
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_expires');
+      
+      setUser(null);
+      setSession(null);
+      setMemberships([]);
+      
+      toast({
+        title: "Logout realizado",
+        description: "Até logo!"
+      });
     } catch (error: any) {
+      // Clear session even if API call fails
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_expires');
+      setUser(null);
+      setSession(null);
+      setMemberships([]);
+      
+      const errorMessage = error instanceof ApiError ? error.message : 'Erro ao sair';
       toast({
         title: "Erro ao sair",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive"
       });
     }
@@ -183,28 +179,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const sendWhatsAppCode = async (phone: string) => {
     try {
-      const { error } = await supabase.functions.invoke('send-whatsapp-code', {
-        body: { phone }
+      await authApi.sendWhatsAppCode(phone);
+      
+      toast({
+        title: "Código enviado!",
+        description: "Verifique seu WhatsApp para o código de verificação."
       });
 
-      if (error) {
-        toast({
-          title: "Erro ao enviar código",
-          description: error.message,
-          variant: "destructive"
-        });
-      } else {
-        toast({
-          title: "Código enviado!",
-          description: "Verifique seu WhatsApp para o código de verificação."
-        });
-      }
-
-      return { error };
+      return { error: null };
     } catch (error: any) {
+      const errorMessage = error instanceof ApiError ? error.message : 'Erro ao enviar código';
       toast({
         title: "Erro ao enviar código",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive"
       });
       return { error };
@@ -213,28 +200,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const verifyWhatsAppCode = async (phone: string, code: string) => {
     try {
-      const { error } = await supabase.functions.invoke('verify-whatsapp-code', {
-        body: { phone, code }
+      await authApi.verifyWhatsAppCode(phone, code);
+      
+      toast({
+        title: "Código verificado!",
+        description: "2FA ativado com sucesso."
       });
 
-      if (error) {
-        toast({
-          title: "Código inválido",
-          description: error.message,
-          variant: "destructive"
-        });
-      } else {
-        toast({
-          title: "Código verificado!",
-          description: "2FA ativado com sucesso."
-        });
-      }
-
-      return { error };
+      return { error: null };
     } catch (error: any) {
+      const errorMessage = error instanceof ApiError ? error.message : 'Código inválido';
       toast({
         title: "Erro na verificação",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive"
       });
       return { error };

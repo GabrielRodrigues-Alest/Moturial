@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '@/lib/supabase';
+import { authApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -21,15 +21,19 @@ export const use2FA = () => {
 
     setLoading(true);
     try {
-      const { data, error } = await api.send2FA(user.id, channel);
-      if (error) throw error;
+      if (channel === 'whatsapp') {
+        await authApi.sendWhatsAppCode(user.phone || '');
+      } else {
+        // For SMS and email, we'll need to implement these endpoints in the backend
+        throw new Error(`Canal ${channel} não implementado ainda`);
+      }
 
       toast({
         title: "Código Enviado",
         description: `Código de verificação enviado via ${channel}`,
       });
 
-      return { data, error: null };
+      return { data: true, error: null };
     } catch (error: any) {
       toast({
         title: "Erro",
@@ -54,8 +58,7 @@ export const use2FA = () => {
 
     setLoading(true);
     try {
-      const { data, error } = await api.verify2FA(user.id, code);
-      if (error) throw error;
+      await authApi.verifyWhatsAppCode(user.phone || '', code);
 
       setVerified(true);
       
@@ -64,7 +67,7 @@ export const use2FA = () => {
         description: "Código verificado com sucesso",
       });
 
-      return { data, error: null };
+      return { data: true, error: null };
     } catch (error: any) {
       toast({
         title: "Código Inválido",
